@@ -1,0 +1,11 @@
+# RTRendererConfig.cmake.in
+@PACKAGE_INIT@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+
+find_dependency(Torch REQUIRED)
+find_dependency(OpenCV REQUIRED)
+find_dependency(CUDA REQUIRED)
+find_dependency(E57Format REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/RTRendererTargets.cmake")
