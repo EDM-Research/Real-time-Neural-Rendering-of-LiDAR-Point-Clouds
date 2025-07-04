@@ -1,6 +1,8 @@
 #include "cloudreader.h"
 #include "PointCloudReader.h"
 #include "Utils.h"
+#define TINYPLY_IMPLEMENTATION
+#include "tinyply.h"
 
 void computeGrid(std::vector<cv::Point3f> cloud, std::vector<cv::Vec3b> colors, std::unordered_map<int, OctreeGrid::Block>& grid, int& numX, int& numY, int& numZ)
 {
@@ -116,34 +118,99 @@ void loadE57(const std::filesystem::path &file_name, std::unordered_map<int, Oct
 
 }
 
-std::unordered_map<int, OctreeGrid::Block> CloudReader::loadCloud(const std::filesystem::path &file_name)
+void loadPLY(const std::filesystem::path &file_name, std::unordered_map<int, OctreeGrid::Block>& grid, int &numX, int& numY, int& numZ)
 {
-    if(!std::filesystem::exists(std::filesystem::path(getenv("HOME")) / cache_dir))
+    std::vector<cv::Point3f> cloud;
+    std::vector<cv::Vec3b> colors;
+
+    try {
+        std::ifstream ss(file_name, std::ios::binary);
+        if (!ss.is_open()) {
+            std::cerr << "Failed to open file: " << file_name << std::endl;
+            exit(-1);
+        }
+
+        tinyply::PlyFile file;
+        file.parse_header(ss);
+
+        std::shared_ptr<tinyply::PlyData> vertices, rgb;
+
+        try {
+            vertices = file.request_properties_from_element("vertex", { "x", "y", "z" });
+        } catch (const std::exception& e) {
+            std::cerr << "Missing vertex positions: " << e.what() << std::endl;
+            exit(-1);
+        }
+
+        try {
+            rgb = file.request_properties_from_element("vertex", { "red", "green", "blue" });
+        } catch (...) {
+            // Color is optional
+        }
+
+        file.read(ss);
+
+        // Copy point data
+        const size_t numVertices = vertices->count;
+        const float* verts = reinterpret_cast<const float*>(vertices->buffer.get());
+        cloud.resize(numVertices);
+        for (size_t i = 0; i < numVertices; ++i) {
+            cloud[i] = cv::Point3f(verts[3 * i + 0], verts[3 * i + 1], verts[3 * i + 2]);
+        }
+
+        // Copy color data if available
+        colors.clear();
+        if (rgb) {
+            const uint8_t* cols = reinterpret_cast<const uint8_t*>(rgb->buffer.get());
+            colors.resize(numVertices);
+            for (size_t i = 0; i < numVertices; ++i) {
+                colors[i] = cv::Vec3b(cols[3 * i + 2], cols[3 * i + 1], cols[3 * i + 0]); // OpenCV uses BGR
+            }
+        }
+
+        computeGrid(cloud, colors, grid, numX, numY, numZ);
+    } catch (const std::exception& e) {
+        std::cerr << "Exception reading PLY: " << e.what() << std::endl;
+        exit(-1);
+    }
+}
+
+
+std::unordered_map<int, OctreeGrid::Block> CloudReader::loadCloud(const std::filesystem::path &file_name, const std::filesystem::path& caching_dir)
+{
+    if(caching_dir.string() != "")
     {
-        std::filesystem::create_directories(std::filesystem::path(getenv("HOME")) / cache_dir);
+        if(std::filesystem::exists(caching_dir/ "pcd.oct"))
+        {
+            std::unordered_map<int, OctreeGrid::Block> grid;
+            int numBlocks_x, numBlocks_y, numBlocks_z;
+            OctreeGrid::readOctreeBinary((caching_dir / "pcd.oct").string(), grid, numBlocks_x, numBlocks_y, numBlocks_z);
+            return grid;
+        }
     }
 
-    if(std::filesystem::exists(std::filesystem::path(getenv("HOME")) / cache_dir / file_name.stem() / "pcd.oct"))
-    {
-        std::unordered_map<int, OctreeGrid::Block> grid;
-        int numBlocks_x, numBlocks_y, numBlocks_z;
-        OctreeGrid::readOctreeBinary((std::filesystem::path(getenv("HOME")) / cache_dir / file_name.stem() / "pcd.oct").string(), grid, numBlocks_x, numBlocks_y, numBlocks_z);
-        return grid;
-    }
-
+    std::unordered_map<int, OctreeGrid::Block> grid;
+    int numBlocks_x, numBlocks_y, numBlocks_z;
 
     if(file_name.extension() == ".e57")
     {
-        std::unordered_map<int, OctreeGrid::Block> grid;
-        int numBlocks_x, numBlocks_y, numBlocks_z;
         loadE57(file_name, grid, numBlocks_x, numBlocks_y, numBlocks_z);
-        std::filesystem::create_directory(std::filesystem::path(getenv("HOME")) / cache_dir / file_name.stem());
-        OctreeGrid::writeOctreeBinary((std::filesystem::path(getenv("HOME")) / cache_dir / file_name.stem() / "pcd.oct").string(), grid, numBlocks_x, numBlocks_y, numBlocks_z);
-        return grid;
+    }
+    else if(file_name.extension() == ".ply")
+    {
+        loadPLY(file_name, grid, numBlocks_x, numBlocks_y, numBlocks_z);
     }
     else
     {
-        return std::unordered_map<int, OctreeGrid::Block>();
+        std::cerr << "File extension " << file_name.extension() << " not supported. Only e57 and ply are supported at this moment." << std::endl;
+        exit(-1);
     }
+
+    if(caching_dir.string() != "")
+    {
+        std::filesystem::create_directories(caching_dir);
+        OctreeGrid::writeOctreeBinary((caching_dir / "pcd.oct").string(), grid, numBlocks_x, numBlocks_y, numBlocks_z);
+    }
+    return grid;
 }
 

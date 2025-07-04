@@ -4,9 +4,6 @@
 #include <unordered_map>
 #include "Frustum.h"
 #include <stdio.h>
-#ifdef WITH_TENSOR_RT
-#include <dlfcn.h>
-#endif
 
 #define THREADS_PER_BLOCK 1024
 #define MAX_FLOAT 3.4028e38
@@ -545,14 +542,6 @@ ProjectCloud::ProjectCloud(const std::unordered_map<int, OctreeGrid::Block>& gri
 
 	if (torch::cuda::is_available()) {
 		std::cout << "CUDA is available!" << std::endl;
-
-#ifdef WITH_TENSOR_RT
-        std::cout << "Loading libtorchtrt.so" << std::endl;
-        void* handle = dlopen("libtorchtrt.so", RTLD_LAZY | RTLD_GLOBAL);
-        if (!handle) {
-            std::cerr << "Failed to load Torch-TensorRT: " << dlerror() << std::endl;
-        }
-#endif
 	}
 	else {
 		std::cout << "CUDA is NOT available!" << std::endl;
@@ -606,6 +595,11 @@ int ProjectCloud::computeRGBDInternal(const CameraCalibration &calibration, cons
     std::vector<int> blockIds; // used in cuda kernel for each blockidx
     std::vector<int> blockO; // used in cuda kernel for each blockidx
     int splatBlocks = cull(calibration, extrinsics, blockIds, blockO);
+
+    if(splatBlocks <= 0)
+    {
+        return 0;
+    }
 
     cv::Matx33d K = calibration.getIntrinsicsMatrix();
     cv::Matx34f mvp(cv::Mat(cv::Mat(K) * cv::Mat(extrinsics)(cv::Rect(0, 0, 4, 3))));
@@ -765,19 +759,28 @@ int ProjectCloud::computeFilteredRGBD(const CameraCalibration& calibration, cons
 int ProjectCloud::computeFull(const CameraCalibration& calibration, const cv::Matx44d& extrinsics, cv::Mat* color, cv::Mat* depth)
 {
     auto start = std::chrono::high_resolution_clock::now();
-    uint8_t* colorBufferPtr; float* depthBufferPtr; float* tensorPtr;
+    uint8_t* colorBufferPtr; float* depthBufferPtr;
     int splatBlocks = computeRGBDInternal(calibration, extrinsics, &colorBufferPtr, &depthBufferPtr);
+    if(splatBlocks <= 0)
+    {
+        cudaFree(depthBufferPtr);
+        cudaFree(colorBufferPtr);
+        return splatBlocks;
+    }
+
     auto start_1 = std::chrono::high_resolution_clock::now();
+    float* tensorPtr;
     applyDepthFilter(calibration, colorBufferPtr, depthBufferPtr, &tensorPtr);
     auto start_2 = std::chrono::high_resolution_clock::now();
      //libtorch inference
-    torch::Tensor tensor = torch::from_blob(
+    torch::Tensor input_fp32 = torch::from_blob(
         tensorPtr, {1,5, calibration.getHeight(),calibration.getWidth()}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA)
     );
-    tensor = tensor.to(torch::kHalf);
+
+    torch::Tensor input_fp16 = input_fp32.to(torch::kHalf);
 
     torch::NoGradGuard no_grad;
-    auto output = model.forward({tensor}).toTensor();
+    auto output = model.forward({input_fp16}).toTensor();
     output = output[0].permute({1, 2, 0}).contiguous();
     if(color != nullptr)
     {

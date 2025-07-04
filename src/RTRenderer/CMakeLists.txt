@@ -15,14 +15,24 @@ find_package(E57Format REQUIRED)
 option(WITH_TENSOR_RT "Enable Torch-TensorRT support" ON)
 
 if(WITH_TENSOR_RT)
-    find_library(TORCH_TENSORRT_LIB torchtrt PATHS ${Torch_TensorRT_DIR}/lib)
-    find_library(TORCH_TENSORRT_RUNTIME_LIB torchtrt_runtime PATHS ${Torch_TensorRT_DIR}/lib)
+    find_library(TORCH_TENSORRT_RUNTIME_LIB torchtrt_runtime)
 
-    if(TORCH_TENSORRT_LIB AND TORCH_TENSORRT_RUNTIME_LIB)
-        add_compile_definitions(WITH_TENSOR_RT)
+    if(TORCH_TENSORRT_RUNTIME_LIB)
+        find_path(Torch_TensorRT_BASE_DIR
+            NAMES torch_tensorrt/torch_tensorrt.h
+            PATHS /usr/local/include /usr/include
+        )
+
+        if (Torch_TensorRT_BASE_DIR)
+            set(Torch_TensorRT_INCLUDE_DIR "${Torch_TensorRT_BASE_DIR}/torch_tensorrt")
+            message(STATUS "Found Torch-TensorRT include dir: ${Torch_TensorRT_INCLUDE_DIR}")
+            include_directories(${Torch_TensorRT_INCLUDE_DIR})
+        else()
+            message(FATAL_ERROR "Torch-TensorRT headers not found")
+        endif()
+
         include_directories(${Torch_TensorRT_DIR}/include)
         set(TORCH_TENSORRT_LIBRARIES
-            ${TORCH_TENSORRT_LIB}
             ${TORCH_TENSORRT_RUNTIME_LIB}
         )
     message(STATUS "Found Torch_TensorRT libraries: " ${TORCH_TENSORRT_LIBRARIES})
@@ -43,7 +53,7 @@ set(SOURCES
     Utils.cpp Utils.h
 )
 
-cuda_add_library(ProjectCloudCUDA STATIC project_cloud.cu)
+cuda_add_library(ProjectCloudCUDA SHARED project_cloud.cu)
 target_include_directories(ProjectCloudCUDA
     PUBLIC
         ${TORCH_INCLUDE_DIRS}
@@ -54,13 +64,14 @@ target_include_directories(ProjectCloudCUDA
 if(WITH_TENSOR_RT)
     target_include_directories(ProjectCloudCUDA
         PUBLIC
-            ${Torch_TensorRT_DIR}/include
+        ${Torch_TensorRT_INCLUDE_DIR}
         )
 endif()
 
 
 add_library(RTRenderer SHARED ${SOURCES}
-    cloudreader.h cloudreader.cpp)
+    cloudreader.h cloudreader.cpp
+    tinyply.h)
 
 target_include_directories(RTRenderer
     PUBLIC
@@ -72,15 +83,14 @@ target_include_directories(RTRenderer
 if(WITH_TENSOR_RT)
     target_include_directories(RTRenderer
         PUBLIC
-            ${Torch_TensorRT_DIR}/include
+            ${Torch_TensorRT_INCLUDE_DIR}
         )
 endif()
 
 target_link_libraries(RTRenderer
     PUBLIC
         ${OpenCV_LIBS}
-        ${TORCH_LIBRARIES}
-        ${TORCH_TENSORRT_LIBRARIES}
+        ${TORCH_LIBRARIES} "-Wl,--no-as-needed" ${TORCH_TENSORRT_LIBRARIES} "-Wl,--as-needed"
         ProjectCloudCUDA
         ${CUDA_LIBRARIES}
         ${CUDA_CUBLAS_LIBRARIES}

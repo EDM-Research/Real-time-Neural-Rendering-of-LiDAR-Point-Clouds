@@ -5,9 +5,6 @@
 #include "CameraCalibration.h"
 #include <torch/script.h>
 #include <torch/cuda.h>
-#ifdef WITH_TENSOR_RT
-#include <torch_tensorrt/torch_tensorrt.h>
-#endif
 
 class ProjectCloud {
 public:

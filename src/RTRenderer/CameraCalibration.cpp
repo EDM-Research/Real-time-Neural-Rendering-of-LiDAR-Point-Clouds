@@ -88,30 +88,82 @@ void CameraCalibration::saveCalibration(const std::string& file)
 
 bool CameraCalibration::loadCalibration(const std::string& file)
 {
-    std::ifstream ifs;
-    ifs.open(file);
-
-    if (ifs.is_open())
+    // Special case: COLMAP-style cameras.txt
+    if (file.size() >= 11 && file.substr(file.size() - 11) == "cameras.txt")
     {
-        ifs >> m_width;
-        ifs >> m_height;
-        for (int r = 0; r < 3; ++r)
-            for (int c = 0; c < 3; ++c)
-                ifs >> m_K(r, c);
+        std::ifstream ifs(file);
+        if (!ifs.is_open())
+        {
+            std::cerr << "Failed to open camera file for reading: " << file << std::endl;
+            return false;
+        }
 
-        m_dists.resize(5);
-        for (int d = 0; d < 5; ++d)
-            ifs >> m_dists[d];
+        std::string line;
+        while (std::getline(ifs, line))
+        {
+            if (line.empty() || line[0] == '#')
+                continue;
 
-        ifs >> m_fishEye;
+            std::istringstream iss(line);
+            int cameraId;
+            std::string model;
+            float fx, fy, cx, cy;
+            float k1, k2, p1, p2;
 
-        return true;
+            iss >> cameraId >> model >> m_width >> m_height;
+            if (model != "OPENCV")
+            {
+                std::cerr << "Unsupported camera model: " << model << std::endl;
+                return false;
+            }
+
+            iss >> fx >> fy >> cx >> cy >> k1 >> k2 >> p1 >> p2;
+
+            // Fill intrinsics
+            m_K = cv::Matx33f::eye();
+            m_K(0, 0) = fx;
+            m_K(1, 1) = fy;
+            m_K(0, 2) = cx;
+            m_K(1, 2) = cy;
+
+            // Fill distortion coefficients
+            m_dists.resize(5, 0.0f);
+            m_dists[0] = k1;
+            m_dists[1] = k2;
+            m_dists[2] = p1;
+            m_dists[3] = p2;
+            m_dists[4] = 0.0f;
+
+            m_fishEye = false;
+
+            return true;
+        }
+
+        std::cerr << "No valid camera data found in cameras.txt" << std::endl;
+        return false;
     }
-    else
+
+    // Default: your original format
+    std::ifstream ifs(file);
+    if (!ifs.is_open())
     {
         std::cerr << "Failed to open calibration file for reading " << file << std::endl;
         return false;
     }
+
+    ifs >> m_width;
+    ifs >> m_height;
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            ifs >> m_K(r, c);
+
+    m_dists.resize(5);
+    for (int d = 0; d < 5; ++d)
+        ifs >> m_dists[d];
+
+    ifs >> m_fishEye;
+
+    return true;
 }
 
 bool CameraCalibration::loadCalibration(const double fx, const double fy, const double cx, const double cy, std::vector<double> dist, int width, int height)

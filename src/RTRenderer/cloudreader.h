@@ -6,10 +6,7 @@
 
 namespace CloudReader {
 
-std::string cache_dir = ".pcl_cache";
-
-std::unordered_map<int, OctreeGrid::Block> loadCloud(const std::filesystem::path& file_name);
-
+std::unordered_map<int, OctreeGrid::Block> loadCloud(const std::filesystem::path& file_name, const std::filesystem::path& cache_dir = std::filesystem::path());
 }
 
 #endif // CLOUDREADER_H
