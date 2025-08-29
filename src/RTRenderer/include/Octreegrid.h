@@ -6,6 +6,7 @@
 #include <numeric>
 #include <random>
 #include <opencv2/opencv.hpp>
+#include <cuda_runtime.h>
 
 class OctreeGrid {
 
@@ -157,4 +158,25 @@ public:
 		}
 		return total_size;
 	}
+
+    static std::vector<float4> getVertexPositions(const std::unordered_map<int, Block>& grid) {
+        std::vector<float4> vertices;
+        for (const auto& pair : grid) {
+            for (const auto& p : pair.second.positions) {
+                vertices.push_back({p.x, p.y, p.z, 1.0f}); // w=1 for homogeneous coordinate
+            }
+        }
+        return vertices;
+    }
+
+    static std::vector<uchar4> getVertexColors(const std::unordered_map<int, Block>& grid) {
+        std::vector<uchar4> colors;
+        for (const auto& pair : grid) {
+            for (const auto& c : pair.second.colors) {
+                colors.push_back({c[0], c[1], c[2], 255}); // w=255 for full alpha
+            }
+        }
+        return colors;
+    }
+
 };

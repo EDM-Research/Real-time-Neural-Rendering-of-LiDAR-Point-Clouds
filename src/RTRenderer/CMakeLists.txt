@@ -1,16 +1,20 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.15)
 
-project(RTRenderer)
+set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
+set(CMAKE_CUDA_ARCHITECTURES 89)
+
+project(RTRenderer LANGUAGES CXX CUDA)
 
 include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
 find_package(OpenCV REQUIRED)
 find_package(Torch REQUIRED)
-find_package(CUDA REQUIRED)
 find_package(E57Format REQUIRED)
+find_package(glm REQUIRED)
 
 option(WITH_TENSOR_RT "Enable Torch-TensorRT support" ON)
 
@@ -41,44 +45,26 @@ if(WITH_TENSOR_RT)
     endif()
 endif()
 
-set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -std=c++17")
+add_library(RTRenderer SHARED)
 
-set(SOURCES 
-    project_cloud.cu project_cloud.h
-    CameraCalibration.cpp CameraCalibration.h
-    Config.h
-    Frustum.cpp Frustum.h
-    Octreegrid.h
-    PointCloudReader.cpp PointCloudReader.h
-    Utils.cpp Utils.h
+target_compile_options(RTRenderer PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-diag-suppress 20012 -rdc=true -lineinfo>
+    $<$<COMPILE_LANGUAGE:CXX>:-O3 -g>
 )
 
-cuda_add_library(ProjectCloudCUDA SHARED project_cloud.cu)
-target_include_directories(ProjectCloudCUDA
-    PUBLIC
-        ${TORCH_INCLUDE_DIRS}
-        ${OpenCV_INCLUDE_DIRS}
-        ${CUDA_INCLUDE_DIRS}
-)
 
-if(WITH_TENSOR_RT)
-    target_include_directories(ProjectCloudCUDA
-        PUBLIC
-        ${Torch_TensorRT_INCLUDE_DIR}
-        )
-endif()
+set_target_properties(RTRenderer PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+set_target_properties(RTRenderer PROPERTIES CUDA_ARCHITECTURES "89")
 
+file(GLOB sources "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c*")
+file(GLOB headers "${CMAKE_CURRENT_SOURCE_DIR}/include/*")
 
-add_library(RTRenderer SHARED ${SOURCES}
-    cloudreader.h cloudreader.cpp
-    tinyply.h)
-
-target_include_directories(RTRenderer
-    PUBLIC
-        ${TORCH_INCLUDE_DIRS}
-        ${OpenCV_INCLUDE_DIRS}
-        ${CUDA_INCLUDE_DIRS}
-)
+target_sources(RTRenderer PRIVATE ${sources})
+target_include_directories(RTRenderer PRIVATE include)
+target_include_directories(RTRenderer PUBLIC
+    ${TORCH_INCLUDE_DIRS}
+    ${OpenCV_INCLUDE_DIRS}
+    )
 
 if(WITH_TENSOR_RT)
     target_include_directories(RTRenderer
@@ -87,27 +73,20 @@ if(WITH_TENSOR_RT)
         )
 endif()
 
-target_link_libraries(RTRenderer
-    PUBLIC
-        ${OpenCV_LIBS}
-        ${TORCH_LIBRARIES} "-Wl,--no-as-needed" ${TORCH_TENSORRT_LIBRARIES} "-Wl,--as-needed"
-        ProjectCloudCUDA
-        ${CUDA_LIBRARIES}
-        ${CUDA_CUBLAS_LIBRARIES}
-        ${CUDA_cudart_LIBRARY}
-        E57Format
+target_link_libraries(RTRenderer PUBLIC
+    glm::glm
+    ${OpenCV_LIBS}
+    ${TORCH_LIBRARIES} "-Wl,--no-as-needed" ${TORCH_TENSORRT_LIBRARIES} "-Wl,--as-needed"
+    E57Format
 )
 
 set(CMAKE_INSTALL_INCLUDEDIR ${CMAKE_INSTALL_PREFIX}/include)
 
-install(FILES project_cloud.h
-              CameraCalibration.h
-              Octreegrid.h
-              cloudreader.h
+install(FILES ${headers}
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/RTRenderer
 )
 
-install(TARGETS RTRenderer ProjectCloudCUDA
+install(TARGETS RTRenderer
   EXPORT RTRendererTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

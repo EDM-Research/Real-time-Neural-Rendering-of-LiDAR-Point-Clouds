@@ -14,6 +14,18 @@ cv::Matx33d CameraCalibration::getIntrinsicsMatrix() const
     return m_K;
 }
 
+glm::mat3 CameraCalibration::getGlmIntrinsicsMatrix() const
+{
+    glm::mat3 result;
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            result[row][col] = static_cast<float>(m_K(row, col)); 
+            // glm is column-major: result[column][row]
+        }
+    }
+    return result;
+}
+
 const std::vector<double>& CameraCalibration::getDistortionParameters()  const
 {
     return m_dists;

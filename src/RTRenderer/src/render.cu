@@ -1,0 +1,362 @@
+#include <sys/types.h>
+
+#include <cfloat>
+#include <cstdint>
+#include <cstdio>
+
+#include "glm/fwd.hpp"
+#include "render.cuh"
+#include "types.h"
+
+__device__ glm::ucvec4 unpackUCVec4(const uint64_t v) {
+    return glm::ucvec4(static_cast<unsigned char>((v >> 0) & 0xFF), static_cast<unsigned char>((v >> 8) & 0xFF),
+                       static_cast<unsigned char>((v >> 16) & 0xFF), static_cast<unsigned char>((v >> 24) & 0xFF));
+}
+
+__global__ void fillBuffer(uint64_t *buffer, uint64_t value, int numElements) {
+    int block_id = blockIdx.x +                         // apartment number on this floor (points across)
+            blockIdx.y * gridDim.x +             // floor number in this building (rows high)
+            blockIdx.z * gridDim.x * gridDim.y;  // building number in this city (panes deep)
+
+    int block_offset = block_id *                             // times our apartment number
+            blockDim.x * blockDim.y * blockDim.z;  // total threads per block (people per apartment)
+
+    int thread_offset = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
+
+    int idx = block_offset + thread_offset;  // global person id in the entire apartment complex
+
+    if (idx < numElements) {
+        buffer[idx] = value;
+    }
+}
+
+__global__ void fillBuffer(uint32_t *buffer, uint32_t value, int numElements) {
+    int block_id = blockIdx.x +                         // apartment number on this floor (points across)
+            blockIdx.y * gridDim.x +             // floor number in this building (rows high)
+            blockIdx.z * gridDim.x * gridDim.y;  // building number in this city (panes deep)
+
+    int block_offset = block_id *                             // times our apartment number
+            blockDim.x * blockDim.y * blockDim.z;  // total threads per block (people per apartment)
+
+    int thread_offset = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
+
+    int idx = block_offset + thread_offset;  // global person id in the entire apartment complex
+
+    if (idx < numElements) {
+        buffer[idx] = value;
+    }
+}
+
+__device__ __forceinline__ float4 matmul(const float m[16], const float4 &v) {
+    float4 result;
+    result.x = m[0] * v.x + m[1] * v.y + m[2] * v.z + m[3];
+    result.y = m[4] * v.x + m[5] * v.y + m[6] * v.z + m[7];
+    result.z = m[8] * v.x + m[9] * v.y + m[10] * v.z + m[11];
+    result.w = m[12] * v.x + m[13] * v.y + m[14] * v.z + m[15];
+    return result;
+}
+
+__device__ __forceinline__ unsigned int packuchar3(const uchar3 &v) {
+    return (static_cast<unsigned int>(v.x) << 0) | (static_cast<unsigned int>(v.y) << 8) |
+            (static_cast<unsigned int>(v.z) << 16);
+}
+
+__device__ __forceinline__ unsigned int packuchar4(const uchar4 &v) {
+    return (static_cast<unsigned int>(v.x) << 0) | (static_cast<unsigned int>(v.y) << 8) |
+            (static_cast<unsigned int>(v.z) << 16) | (static_cast<unsigned int>(v.w) << 24);
+}
+
+__device__ __forceinline__ uchar3 unpackuchar3(const unsigned int v) {
+    return {static_cast<unsigned char>((v >> 0) & 0xFF), static_cast<unsigned char>((v >> 8) & 0xFF),
+                static_cast<unsigned char>((v >> 16) & 0xFF)};
+}
+
+__device__ __forceinline__ uchar4 unpackuchar4(const unsigned int v) {
+    return {static_cast<unsigned char>((v >> 0) & 0xFF), static_cast<unsigned char>((v >> 8) & 0xFF),
+                static_cast<unsigned char>((v >> 16) & 0xFF), static_cast<unsigned char>((v >> 24) &0xFF)};
+}
+
+__device__ void update_pixel(unsigned long long* addr,
+                             unsigned int min_depth,
+                             float min_depth_val,
+                             int count, int r, int g, int b)
+{
+    unsigned char ccount = (count >= 255) ? 255 : (unsigned char)count;
+    unsigned char pr = (unsigned char)(r / count);
+    unsigned char pg = (unsigned char)(g / count);
+    unsigned char pb = (unsigned char)(b / count);
+    unsigned long long replace_val = ((unsigned long long)min_depth << 32) | packuchar4({ccount, pr, pg, pb});
+
+    unsigned long long old_val = *addr;
+    unsigned long long assumed;
+
+    do {
+        assumed = old_val;
+
+        unsigned int curr_depth = (unsigned int)(assumed >> 32);
+        float curr_depth_val = __uint_as_float(curr_depth);
+
+        unsigned long long new_val;
+        if((min_depth_val < curr_depth_val + 0.02f) && (min_depth_val > curr_depth_val - 0.02f))
+        {
+            uchar4 crgb = unpackuchar4(assumed);
+            int new_count = crgb.x + count;
+            int new_r = crgb.y * crgb.x + r;
+            int new_g = crgb.z * crgb.x + g;
+            int new_b = crgb.w * crgb.x + b;
+
+            unsigned char packed_count = (new_count >= 255) ? 255 : new_count;
+            unsigned char packed_r = (unsigned char)(new_r / new_count);
+            unsigned char packed_g = (unsigned char)(new_g / new_count);
+            unsigned char packed_b = (unsigned char)(new_b / new_count);
+
+            new_val = ((unsigned long long)min(curr_depth, min_depth) << 32) |
+                    packuchar4({packed_count, packed_r, packed_g, packed_b});
+        }
+        else if(min_depth_val < curr_depth_val)
+        {
+            new_val = replace_val;
+        }
+        else
+        {
+            return;
+        }
+
+        // try swap
+        old_val = atomicCAS(addr, assumed, new_val);
+
+    } while(old_val != assumed);
+}
+
+__global__ void minDepthPass(uint32_t *min_depth_buffer, const float4 * vertices, const float cam_proj[16], uint2 image_size, size_t n_points)
+{
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (global_id >= n_points) return;
+
+
+    float4 p = __ldg(&vertices[global_id]);
+
+    float4 r = matmul(cam_proj, p);
+    if(r.z <= 0.0f) return;
+
+    int u = rintf(__fdividef(r.x, r.z));
+    int v = rintf(__fdividef(r.y, r.z));
+
+    if (u < 0 || u >= image_size.x || v < 0 || v >= image_size.y) return;
+
+    unsigned int pixID = v * image_size.x + u;
+
+    unsigned int depth = __float_as_uint(r.z);
+
+    unsigned int same_pixel_mask = __match_any_sync(__activemask(), pixID);
+    unsigned int min_depth = __reduce_min_sync(same_pixel_mask, depth);
+
+    bool is_closest_thread = (depth == min_depth);
+
+    if(is_closest_thread)
+    {
+        atomicMin(&min_depth_buffer[pixID], min_depth);
+    }
+}
+
+__global__ void accumulatePass(const float4 *vertices, const uchar4* colors, size_t n_points, uint2 image_size, const float cam_proj[16], uint32_t* min_depth_buffer, uint32_t* output_data)
+{
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (global_id >= n_points) return;
+
+    float4 p = __ldg(&vertices[global_id]);
+    float4 result = matmul(cam_proj, p);
+
+    if(result.z <= 0.0f) return;
+
+    int u = rintf(__fdividef(result.x, result.z));
+    int v = rintf(__fdividef(result.y, result.z));
+
+    if (u < 0 || u >= image_size.x || v < 0 || v >= image_size.y) return;
+
+    unsigned int pixID = v * image_size.x + u;
+    unsigned int min_depth = __ldg(&min_depth_buffer[pixID]);
+
+    float min_depth_val = __uint_as_float(min_depth);
+    float depth_val = result.z;
+
+    if(depth_val > min_depth_val + 0.02f)
+    {
+        return; // not within depth
+    }
+
+    uchar4 color = __ldg(&colors[global_id]);
+
+    unsigned int same_pixel_mask = __match_any_sync(__activemask(), pixID);
+
+    unsigned int r = __reduce_add_sync(same_pixel_mask, color.x);
+    unsigned int g = __reduce_add_sync(same_pixel_mask, color.y);
+    unsigned int b = __reduce_add_sync(same_pixel_mask, color.z);
+    unsigned int count = __reduce_add_sync(same_pixel_mask, 1);
+
+    unsigned int lane_id = threadIdx.x & 31;
+    unsigned int leader_lane = __ffs(same_pixel_mask) - 1;
+
+    if(lane_id == leader_lane)
+    {
+        atomicAdd(&output_data[pixID * 4 + 0], r);
+        atomicAdd(&output_data[pixID * 4 + 1], g);
+        atomicAdd(&output_data[pixID * 4 + 2], b);
+        atomicAdd(&output_data[pixID * 4 + 3], count);
+    }
+}
+
+__global__ void resolvePass(uint8_t *image, uint32_t* color_buffer, size_t count)
+{
+    int block_id = blockIdx.x +                         // apartment number on this floor (points across)
+            blockIdx.y * gridDim.x +             // floor number in this building (rows high)
+            blockIdx.z * gridDim.x * gridDim.y;  // building number in this city (panes deep)
+
+    int block_offset = block_id *                             // times our apartment number
+            blockDim.x * blockDim.y * blockDim.z;  // total threads per block (people per apartment)
+
+    int thread_offset = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
+
+    int id = block_offset + thread_offset;  // global person id in the entire apartment complex
+
+    if (id > count) return;
+
+    unsigned int c = color_buffer[id * 4 + 3];
+    if(c <= 0)
+    {
+        image[id * 3] = (unsigned char)(0);
+        image[id * 3 + 1] = (unsigned char)(0);
+        image[id * 3 + 2] = (unsigned char)(0);
+        return;
+    }
+
+    unsigned int r = color_buffer[id * 4];
+    unsigned int g = color_buffer[id * 4 + 1];
+    unsigned int b = color_buffer[id * 4 + 2];
+
+    image[id * 3] = (unsigned char)(r/c);
+    image[id * 3 + 1] = (unsigned char)(g/c);
+    image[id * 3 + 2] = (unsigned char)(b/c);
+}
+
+
+__global__ void vertexOrderOptimization(uint64_t *output_data, const float4 *vertices, const uchar4 *colors,
+                                        const float cam_proj[16], uint2 image_size, size_t n_points) {
+    int global_id = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (global_id >= n_points) return;
+
+    float4 point = __ldg(&vertices[global_id]);
+    uchar4 color = __ldg(&colors[global_id]);
+
+    // Perform matrix-vector multiplication
+    float4 result = matmul(cam_proj, point);
+
+    int u = rintf(__fdividef(result.x, result.z));
+    int v = rintf(__fdividef(result.y, result.z));
+
+    if (result.z < 0.0f || u < 0 || u >= image_size.x || v < 0 || v >= image_size.y) return;
+
+    unsigned int pixID = v * image_size.x + u;
+
+    unsigned int depth = __float_as_uint(result.z);
+
+    unsigned int same_pixel_mask = __match_any_sync(__activemask(), pixID);
+    unsigned int min_depth = __reduce_min_sync(same_pixel_mask, depth);
+
+    float depth_val = __uint_as_float(depth);
+    float min_depth_val = __uint_as_float(min_depth);
+
+    bool is_nearby_threads = (depth_val - min_depth_val <= 0.02f);
+    bool is_closest_thread = (depth == min_depth);
+
+    unsigned int nearby_mask = __ballot_sync(same_pixel_mask, is_nearby_threads);
+
+    if(!is_nearby_threads)
+        return;
+
+    unsigned int r     = __reduce_add_sync(nearby_mask, color.x);
+    unsigned int g     = __reduce_add_sync(nearby_mask, color.y);
+    unsigned int b     = __reduce_add_sync(nearby_mask, color.z);
+    unsigned int count = __reduce_add_sync(nearby_mask, 1);
+
+    if(is_closest_thread)
+    {
+        update_pixel((unsigned long long*)&output_data[pixID], min_depth, min_depth_val, count, r, g, b);
+    }
+}
+
+__global__ void findBlockMinMaxKernel(uint32_t *d_in, uint32_t *d_block_mins, uint32_t *d_block_maxes, size_t size) {
+    extern __shared__ uint32_t s_data[];
+    uint32_t *s_mins = s_data;                    // first half for mins
+    uint32_t *s_maxes = s_data + blockDim.x;      // second half for maxes
+
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+    uint32_t val = (tid < size) && d_in[tid] != 0x7F7FFFFF ? d_in[tid] /*>> 32*/ : 0;
+
+    s_mins[threadIdx.x] = (tid < size) ? val : 0xFFFFFFFF;  // initialize mins to max
+    s_maxes[threadIdx.x] = val;                             // initialize maxes to val
+    __syncthreads();
+
+    // Block-level reduction
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (threadIdx.x < s) {
+            s_mins[threadIdx.x] = min(s_mins[threadIdx.x], s_mins[threadIdx.x + s]);
+            s_maxes[threadIdx.x] = max(s_maxes[threadIdx.x], s_maxes[threadIdx.x + s]);
+        }
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0) {
+        d_block_mins[blockIdx.x] = s_mins[0];
+        d_block_maxes[blockIdx.x] = s_maxes[0];
+    }
+}
+
+__global__ void findAbsoluteMinMaxKernel(uint32_t *d_block_mins, uint32_t *d_block_maxes, uint32_t *d_absolute_min, uint32_t *d_absolute_max, size_t num_blocks) {
+    int tid = threadIdx.x;
+
+    uint32_t my_min = 0xFFFFFFFF;
+    uint32_t my_max = 0;
+
+    for (int i = tid; i < num_blocks; i += blockDim.x) {
+        my_min = min(my_min, d_block_mins[i]);
+        my_max = max(my_max, d_block_maxes[i]);
+    }
+
+    my_min = __reduce_min_sync(__activemask(), my_min);
+    my_max = __reduce_max_sync(__activemask(), my_max);
+
+    if (threadIdx.x == 0) {
+        d_absolute_min[0] = my_min;
+        d_absolute_max[0] = my_max;
+    }
+}
+
+__global__ void resolve(uint8_t *image, float *depth, const uint64_t *data,
+                        size_t count) {
+    int block_id = blockIdx.x +                         // apartment number on this floor (points across)
+            blockIdx.y * gridDim.x +             // floor number in this building (rows high)
+            blockIdx.z * gridDim.x * gridDim.y;  // building number in this city (panes deep)
+
+    int block_offset = block_id *                             // times our apartment number
+            blockDim.x * blockDim.y * blockDim.z;  // total threads per block (people per apartment)
+
+    int thread_offset = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
+
+    int id = block_offset + thread_offset;  // global person id in the entire apartment complex
+
+    if (id > count) return;
+
+    uint64_t val = data[id];
+    if (val == 0x7F7FFFFF00000000) return;
+    glm::ucvec4 img_val = unpackUCVec4(val);
+    image[id * 3] = img_val.y;
+    image[id * 3 + 1] = img_val.z;
+    image[id * 3 + 2] = img_val.w;
+
+    float depth_val = __uint_as_float((uint)(val >> 32));
+    depth[id] = depth_val;
+}

@@ -3,6 +3,7 @@
 
 #include <opencv2/opencv.hpp>
 #include <vector>
+#include <glm/glm.hpp>
 
 class CameraCalibration
 {
@@ -14,6 +15,7 @@ public:
 
 
     cv::Matx33d getIntrinsicsMatrix() const;
+    glm::mat3 getGlmIntrinsicsMatrix() const;
     double getFocalLengthX() const;
     double getFocalLengthY() const;
     double getPrincipalPointX() const;
