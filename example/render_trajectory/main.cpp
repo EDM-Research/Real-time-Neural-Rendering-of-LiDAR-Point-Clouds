@@ -68,18 +68,22 @@ int main(int argc, char**argv)
     CameraCalibration calibration;
     calibration.loadCalibration(calib);
     
-    calibration = calibration.getScaledCalibration(960,720);
+//    calibration = calibration.getScaledCalibration(960,720);
 
     // read point cloud (e57 or ply)
     auto grid = CloudReader::loadCloud(path_to_cloud, std::filesystem::path(getenv("HOME")) / ".pcl_cache"); // caches processed point cloud in ~/.pcl_cache, can change this to cache multiple point clouds
-    std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, std::filesystem::path(getenv("HOME")) / ".pcl_cache" / "trt_960.ts"); // <= replace with path to model file
+    std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, std::filesystem::path(getenv("HOME")) / ".pcl_cache" / "trt_1920.ts"); // <= replace with path to model file
 
     std::vector<TrajectoryEntry> trajectory = readOrderedTrajectoryFile(traj_path);
+
+//    calibration.setHeight(1440);
+//    calibration.setWidth(1440);
 
     for (const auto& entry : trajectory) {
         cv::Mat rgb = cv::Mat(cv::Size(calibration.getWidth(), calibration.getHeight()), CV_8UC3);
         cv::Mat depth = cv::Mat(cv::Size(calibration.getWidth(), calibration.getHeight()), CV_32F);
-        projector->computeFull(calibration, entry.pose, & rgb, &depth);
+        std::cout << entry.pose << std::endl;
+        projector->computeFilteredRGBD(calibration, entry.pose, & rgb, &depth);
         cv::imwrite(entry.filename, rgb);
     }
     return 0;

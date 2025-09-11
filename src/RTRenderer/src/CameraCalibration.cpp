@@ -100,6 +100,7 @@ void CameraCalibration::saveCalibration(const std::string& file)
 
 bool CameraCalibration::loadCalibration(const std::string& file)
 {
+    std::cout << file << std::endl;
     // Special case: COLMAP-style cameras.txt
     if (file.size() >= 11 && file.substr(file.size() - 11) == "cameras.txt")
     {
@@ -120,16 +121,18 @@ bool CameraCalibration::loadCalibration(const std::string& file)
             int cameraId;
             std::string model;
             float fx, fy, cx, cy;
-            float k1, k2, p1, p2;
+            float k1, k2, p1, p2, k3;
 
             iss >> cameraId >> model >> m_width >> m_height;
+            std::cout << m_width << "    " << m_height << std::endl;
+
             if (model != "OPENCV")
             {
                 std::cerr << "Unsupported camera model: " << model << std::endl;
                 return false;
             }
 
-            iss >> fx >> fy >> cx >> cy >> k1 >> k2 >> p1 >> p2;
+            iss >> fx >> fy >> cx >> cy >> k1 >> k2 >> p1 >> p2 >> k3;
 
             // Fill intrinsics
             m_K = cv::Matx33f::eye();
@@ -144,7 +147,7 @@ bool CameraCalibration::loadCalibration(const std::string& file)
             m_dists[1] = k2;
             m_dists[2] = p1;
             m_dists[3] = p2;
-            m_dists[4] = 0.0f;
+            m_dists[4] = k3;
 
             m_fishEye = false;
 

@@ -25,10 +25,10 @@ private:
     uchar4 *d_color_data;
     uint8_t *d_image;
     glm::mat4 *d_cam_proj;
-    uint32_t *d_block_maxes;
-    uint32_t *d_block_mins;
-    uint32_t *d_absolute_max;
-    uint32_t *d_absolute_min;
+    uint32_t *d_local_maxes;
+    uint32_t *d_local_mins;
+    uint32_t *d_final_max;
+    uint32_t *d_final_min;
     c10::Half* tensorPtr;
     uint32_t* d_output_color;
     uint32_t* d_output_depth;
@@ -38,8 +38,8 @@ private:
 
     int min_grid_size;
     int block_size;
-
-    int num_blocks;
+    int numBlocksPCDLevel;
+    int numBlocksImgLevel;
 
     dim3 block_dim;
     dim3 grid_dim;

@@ -3,8 +3,8 @@ from model import UNet
 import torch_tensorrt
 import os
 
-H = 1440
-W = 1440
+H = 720
+W = 960
 
 model = UNet(in_channels=5, out_channels=3, features=[64, 128, 256, 512])
 checkpoint = torch.load("model.pth.tar")

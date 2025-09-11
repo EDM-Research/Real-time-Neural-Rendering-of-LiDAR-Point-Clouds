@@ -25,24 +25,6 @@ __constant__ float filterStrength = 1.025;
 __constant__ float gradientFilter = 0.03;
 __constant__ int laplaceKernel[9] = { 0, 1, 0, 1, -4, 1, 0, 1, 0 };
 
-
-__global__ void initializeFloatBuffer(float* buffer, size_t size, float value) {
-    int block_id = blockIdx.x +                         // apartment number on this floor (points across)
-            blockIdx.y * gridDim.x +             // floor number in this building (rows high)
-            blockIdx.z * gridDim.x * gridDim.y;  // building number in this city (panes deep)
-
-    int block_offset = block_id *                             // times our apartment number
-            blockDim.x * blockDim.y * blockDim.z;  // total threads per block (people per apartment)
-
-    int thread_offset = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
-
-    int idx = block_offset + thread_offset;  // global person id in the entire apartment complex
-
-    if (idx < size) {
-        buffer[idx] = value;
-    }
-}
-
 __global__ void reduce(float* highRes, float* lowRes, int width, int height)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -218,20 +200,21 @@ ProjectCloud::ProjectCloud(const std::unordered_map<int, OctreeGrid::Block>& gri
     CUDA_ERROR(cudaMalloc(&d_vertices_data, data_size * sizeof(float4)));
     CUDA_ERROR(cudaMalloc(&d_color_data, data_size * sizeof(uint4)));
     CUDA_ERROR(cudaMalloc(&d_cam_proj, sizeof(glm::mat4)));
-    CUDA_ERROR(cudaMalloc(&d_absolute_max, sizeof(uint32_t)));
-    CUDA_ERROR(cudaMalloc(&d_absolute_min, sizeof(uint32_t)));
+    CUDA_ERROR(cudaMalloc(&d_final_max, sizeof(uint32_t)));
+    CUDA_ERROR(cudaMalloc(&d_final_min, sizeof(uint32_t)));
     CUDA_ERROR(cudaMemcpy(d_vertices_data, vertices.data(), data_size * sizeof(float4), cudaMemcpyHostToDevice));
     CUDA_ERROR(cudaMemcpy(d_color_data, colors.data(), data_size * sizeof(uchar4), cudaMemcpyHostToDevice));
+
+    CUDA_ERROR(cudaMalloc(&d_local_maxes, sizeof(uint32_t)));
+    CUDA_ERROR(cudaMalloc(&d_local_mins, sizeof(uint32_t)));
 
     CUDA_ERROR(cudaMalloc(&d_output_color, sizeof(uint32_t)));
     CUDA_ERROR(cudaMalloc(&d_output_depth, sizeof(uint32_t)));
     CUDA_ERROR(cudaMalloc(&d_image, sizeof(uint8_t) * 3));
-    CUDA_ERROR(cudaMalloc(&d_block_maxes, sizeof(uint32_t)));
-    CUDA_ERROR(cudaMalloc(&d_block_mins, sizeof(uint32_t)));
     CUDA_ERROR(cudaMalloc(&tensorPtr, sizeof(c10::Half)));
 
-    cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, vertexOrderOptimization);
-    num_blocks = (data_size + block_size - 1) / block_size;
+    cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, minDepthPass);
+    numBlocksPCDLevel = (data_size + block_size - 1) / block_size;
 
     if (torch::cuda::is_available()) {
         std::cout << "CUDA is available!" << std::endl;
@@ -258,10 +241,10 @@ ProjectCloud::~ProjectCloud()
     cudaFree(d_output_depth);
     cudaFree(d_image);
     cudaFree(d_cam_proj);
-    cudaFree(d_block_maxes);
-    cudaFree(d_block_mins);
-    cudaFree(d_absolute_max);
-    cudaFree(d_absolute_min);
+    cudaFree(d_local_maxes);
+    cudaFree(d_local_mins);
+    cudaFree(d_final_max);
+    cudaFree(d_final_min);
     cudaFree(tensorPtr);
 }
 
@@ -277,14 +260,18 @@ int ProjectCloud::computeRGBD(const CameraCalibration &calibration, const cv::Ma
         cudaFree(d_output_color);
         cudaFree(d_image);
         cudaFree(d_output_depth);
-        cudaFree(d_block_maxes);
-        cudaFree(d_block_mins);
+        cudaFree(d_local_maxes);
+        cudaFree(d_local_mins);
+        cudaFree(tensorPtr);
+
+        numBlocksImgLevel = (calibration.getWidth() * calibration.getHeight() + block_size - 1) / block_size;
+        CUDA_ERROR(cudaMalloc(&d_local_maxes, numBlocksImgLevel * sizeof(uint32_t)));
+        CUDA_ERROR(cudaMalloc(&d_local_mins, numBlocksImgLevel * sizeof(uint32_t)));
 
         CUDA_ERROR(cudaMalloc(&d_output_color, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t) * 4));
         CUDA_ERROR(cudaMalloc(&d_image, calibration.getWidth() * calibration.getHeight() * sizeof(uint8_t) * 3));
         CUDA_ERROR(cudaMalloc(&d_output_depth, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
-        CUDA_ERROR(cudaMalloc(&d_block_maxes, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
-        CUDA_ERROR(cudaMalloc(&d_block_mins, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
+        CUDA_ERROR(cudaMalloc(&tensorPtr, calibration.getWidth() * calibration.getHeight() * 5 * sizeof(c10::Half)));
 
         grid_dim.x = calibration.getWidth() / block_dim.x;
         grid_dim.y = calibration.getHeight() / block_dim.y;
@@ -314,15 +301,12 @@ int ProjectCloud::computeRGBDInternal(const CameraCalibration &calibration, cons
     glm::mat4 camProj = glm::transpose(glm::mat4(glm::transpose(calibration.getGlmIntrinsicsMatrix())) * cvMatx44dToGlmMat4(extrinsics));
 
     CUDA_ERROR(cudaMemcpy(d_cam_proj, glm::value_ptr(camProj), sizeof(glm::mat4), cudaMemcpyHostToDevice));
-    {
-        auto timer = ScopedTimer("VOO optim ");
-        minDepthPass<<<num_blocks, block_size>>>(d_output_depth, d_vertices_data, (float*)d_cam_proj, image_size, data_size);
-        cudaDeviceSynchronize();
-        accumulatePass<<<num_blocks, block_size>>>(d_vertices_data, d_color_data, data_size, image_size, (float*)d_cam_proj, d_output_depth, d_output_color);
-        cudaDeviceSynchronize();
-        resolvePass<<<grid_dim, block_dim>>>(d_image, d_output_color, calibration.getWidth() * calibration.getHeight());
-        cudaDeviceSynchronize();
-    }
+    minDepthPass<<<numBlocksPCDLevel, block_size>>>(d_output_depth, d_vertices_data, (float*)d_cam_proj, image_size, data_size);
+    cudaDeviceSynchronize();
+    accumulatePass<<<numBlocksPCDLevel, block_size>>>(d_vertices_data, d_color_data, data_size, image_size, (float*)d_cam_proj, d_output_depth, d_output_color);
+    cudaDeviceSynchronize();
+    resolvePass<<<grid_dim, block_dim>>>(d_image, d_output_color, calibration.getWidth() * calibration.getHeight());
+    cudaDeviceSynchronize();
 
     return 1;
 }
@@ -330,23 +314,22 @@ int ProjectCloud::computeRGBDInternal(const CameraCalibration &calibration, cons
 
 void ProjectCloud::applyDepthFilter(const CameraCalibration &calibration)
 {
-    int threadsPerBlock = 1024;
     std::vector<float*> imgResolutions(depthRescaleDepth + 1);
     imgResolutions[0] = reinterpret_cast<float*>(d_output_depth);
 
     int newWidth = calibration.getWidth();
     int newHeight = calibration.getHeight();
-    int nrBlocks = (int)((newWidth * newHeight + threadsPerBlock - 1) / threadsPerBlock);
+    int nrBlocks = (int)((newWidth * newHeight + block_size - 1) / block_size);
 
     for (int i = 1; i < imgResolutions.size(); ++i)
     {
         newWidth /= 2;
         newHeight /= 2;
-        nrBlocks = (int)((newWidth * newHeight + threadsPerBlock - 1) / threadsPerBlock);
+        nrBlocks = (int)((newWidth * newHeight + block_size - 1) / block_size);
 
         cudaMalloc(&imgResolutions[i], (newWidth * newHeight) * sizeof(float));
 
-        reduce<<<nrBlocks, threadsPerBlock>>>(imgResolutions[i - 1], imgResolutions[i], newWidth, newHeight);
+        reduce<<<nrBlocks, block_size>>>(imgResolutions[i - 1], imgResolutions[i], newWidth, newHeight);
         cudaDeviceSynchronize();
     }
 
@@ -355,34 +338,35 @@ void ProjectCloud::applyDepthFilter(const CameraCalibration &calibration)
         uint8_t* gradMask;
         cudaMalloc(&gradMask, (newWidth * newHeight) * sizeof(uint8_t));
 
-        laplacianKernel<<<nrBlocks, threadsPerBlock>>>(imgResolutions[i], gradMask, newWidth, newHeight);
+        laplacianKernel<<<nrBlocks, block_size>>>(imgResolutions[i], gradMask, newWidth, newHeight);
         cudaDeviceSynchronize();
 
         newWidth *= 2;
         newHeight *= 2;
-        nrBlocks = (int)((newWidth * newHeight + threadsPerBlock - 1) / threadsPerBlock);
+        nrBlocks = (int)((newWidth * newHeight + block_size - 1) / block_size);
 
         uint8_t* mask;
         cudaMalloc(&mask, newWidth * newHeight * sizeof(uint8_t));
 
-        compareImgsKernel<<<nrBlocks, threadsPerBlock>>>(imgResolutions[i], imgResolutions[i - 1], gradMask, mask, newWidth, newHeight);
+        compareImgsKernel<<<nrBlocks, block_size>>>(imgResolutions[i], imgResolutions[i - 1], gradMask, mask, newWidth, newHeight);
         cudaDeviceSynchronize();
 
         cudaFree(gradMask);
 
         if (i == 1)
         {
-            findBlockMinMaxKernel<<<grid_dim, block_dim, 16 * 16 * sizeof(uint32_t)>>>(d_output_depth, d_block_mins, d_block_maxes, data_size);
+            uint32_t sharedMemSize = 2 * block_size * sizeof(uint32_t);
+            find_local_minmax_kernel<<<nrBlocks, block_size, sharedMemSize>>>(d_output_depth, d_local_mins, d_local_maxes, newWidth * newHeight);
             cudaDeviceSynchronize();
-            findAbsoluteMinMaxKernel<<<1, block_dim>>>(d_block_mins, d_block_maxes, d_absolute_min, d_absolute_max, grid_dim.x * grid_dim.y);
+            find_overall_minmax_kernel<<<1, block_size, sharedMemSize>>>(d_local_mins, d_local_maxes, d_final_min, d_final_max, nrBlocks);
             cudaDeviceSynchronize();
 
-            removeMask<<<nrBlocks, threadsPerBlock>>>(imgResolutions[i - 1], d_image, mask, tensorPtr, d_absolute_min, d_absolute_max, newWidth, newHeight);
+            removeMask<<<nrBlocks, block_size>>>(imgResolutions[i - 1], d_image, mask, tensorPtr, d_final_min, d_final_max, newWidth, newHeight);
             cudaDeviceSynchronize();
         }
         else
         {
-            resizeKernel<<<nrBlocks, threadsPerBlock>>>(imgResolutions[i], imgResolutions[i - 1], mask, newWidth, newHeight);
+            resizeKernel<<<nrBlocks, block_size>>>(imgResolutions[i], imgResolutions[i - 1], mask, newWidth, newHeight);
             cudaDeviceSynchronize();
         }
 
@@ -398,14 +382,18 @@ int ProjectCloud::computeFilteredRGBD(const CameraCalibration& calibration, cons
         cudaFree(d_output_color);
         cudaFree(d_image);
         cudaFree(d_output_depth);
-        cudaFree(d_block_maxes);
-        cudaFree(d_block_mins);
+        cudaFree(d_local_maxes);
+        cudaFree(d_local_mins);
+        cudaFree(tensorPtr);
+
+        numBlocksImgLevel = (calibration.getWidth() * calibration.getHeight() + block_size - 1) / block_size;
+        CUDA_ERROR(cudaMalloc(&d_local_maxes, numBlocksImgLevel * sizeof(uint32_t)));
+        CUDA_ERROR(cudaMalloc(&d_local_mins, numBlocksImgLevel * sizeof(uint32_t)));
 
         CUDA_ERROR(cudaMalloc(&d_output_color, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t) * 4));
         CUDA_ERROR(cudaMalloc(&d_image, calibration.getWidth() * calibration.getHeight() * sizeof(uint8_t) * 3));
         CUDA_ERROR(cudaMalloc(&d_output_depth, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
-        CUDA_ERROR(cudaMalloc(&d_block_maxes, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
-        CUDA_ERROR(cudaMalloc(&d_block_mins, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
+        CUDA_ERROR(cudaMalloc(&tensorPtr, calibration.getWidth() * calibration.getHeight() * 5 * sizeof(c10::Half)));
 
         grid_dim.x = calibration.getWidth() / block_dim.x;
         grid_dim.y = calibration.getHeight() / block_dim.y;
@@ -438,16 +426,18 @@ int ProjectCloud::computeFull(const CameraCalibration& calibration, const cv::Ma
         cudaFree(d_output_color);
         cudaFree(d_image);
         cudaFree(d_output_depth);
-        cudaFree(d_block_maxes);
-        cudaFree(d_block_mins);
+        cudaFree(d_local_maxes);
+        cudaFree(d_local_mins);
         cudaFree(tensorPtr);
+
+        numBlocksImgLevel = (calibration.getWidth() * calibration.getHeight() + block_size - 1) / block_size;
+        CUDA_ERROR(cudaMalloc(&d_local_maxes, numBlocksImgLevel * sizeof(uint32_t)));
+        CUDA_ERROR(cudaMalloc(&d_local_mins, numBlocksImgLevel * sizeof(uint32_t)));
 
         CUDA_ERROR(cudaMalloc(&d_output_color, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t) * 4));
         CUDA_ERROR(cudaMalloc(&d_image, calibration.getWidth() * calibration.getHeight() * sizeof(uint8_t) * 3));
         CUDA_ERROR(cudaMalloc(&d_output_depth, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
-        CUDA_ERROR(cudaMalloc(&d_block_maxes, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
-        CUDA_ERROR(cudaMalloc(&d_block_mins, calibration.getWidth() * calibration.getHeight() * sizeof(uint32_t)));
-        CUDA_ERROR(cudaMalloc(&tensorPtr, 720*960 * 5 * sizeof(c10::Half)));
+        CUDA_ERROR(cudaMalloc(&tensorPtr, calibration.getWidth() * calibration.getHeight() * 5 * sizeof(c10::Half)));
 
         grid_dim.x = calibration.getWidth() / block_dim.x;
         grid_dim.y = calibration.getHeight() / block_dim.y;
