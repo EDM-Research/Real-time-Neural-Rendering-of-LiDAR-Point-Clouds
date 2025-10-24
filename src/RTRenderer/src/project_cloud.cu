@@ -222,14 +222,21 @@ ProjectCloud::ProjectCloud(const std::unordered_map<int, OctreeGrid::Block>& gri
     else {
         std::cout << "CUDA is NOT available!" << std::endl;
     }
-    try {
-        model = torch::jit::load(modelFilename);
-        model.to(torch::kCUDA);
-        // model.to(torch::kHalf);
+    if(modelFilename != std::string(""))
+    {
+        try {
+            model = torch::jit::load(modelFilename);
+            model.to(torch::kCUDA);
+            // model.to(torch::kHalf);
+        }
+        catch (const c10::Error& e) {
+            std::cerr << "Error loading the model\n" << e.what() << std::endl << std::endl;
+            exit(-1);
+        }
     }
-    catch (const c10::Error& e) {
-        std::cerr << "Error loading the model\n" << e.what() << std::endl << std::endl;
-        exit(-1);
+    else
+    {
+        std::cerr << "No model file name given, computeFull will not work." << std::endl;
     }
 }
 

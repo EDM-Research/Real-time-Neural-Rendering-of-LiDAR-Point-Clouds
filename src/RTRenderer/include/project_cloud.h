@@ -10,7 +10,7 @@
 
 class ProjectCloud {
 public:
-    ProjectCloud(const std::unordered_map<int, OctreeGrid::Block>& grid, const std::string& modelFilename);
+    ProjectCloud(const std::unordered_map<int, OctreeGrid::Block>& grid, const std::string& modelFilename = std::string(""));
     ~ProjectCloud();
 
     int computeRGBD(const CameraCalibration& calibration, const cv::Matx44d& extrinsics, cv::Mat* color, cv::Mat* depth);

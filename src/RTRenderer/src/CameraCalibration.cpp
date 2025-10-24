@@ -100,8 +100,6 @@ void CameraCalibration::saveCalibration(const std::string& file)
 
 bool CameraCalibration::loadCalibration(const std::string& file)
 {
-    std::cout << file << std::endl;
-    // Special case: COLMAP-style cameras.txt
     if (file.size() >= 11 && file.substr(file.size() - 11) == "cameras.txt")
     {
         std::ifstream ifs(file);
@@ -124,32 +122,33 @@ bool CameraCalibration::loadCalibration(const std::string& file)
             float k1, k2, p1, p2, k3;
 
             iss >> cameraId >> model >> m_width >> m_height;
-            std::cout << m_width << "    " << m_height << std::endl;
-
-            if (model != "OPENCV")
+            if (model != "OPENCV" && model != "OPENCV_FISHEYE")
             {
                 std::cerr << "Unsupported camera model: " << model << std::endl;
                 return false;
             }
 
-            iss >> fx >> fy >> cx >> cy >> k1 >> k2 >> p1 >> p2 >> k3;
+            iss >> fx >> fy >> cx >> cy;
 
-            // Fill intrinsics
             m_K = cv::Matx33f::eye();
             m_K(0, 0) = fx;
             m_K(1, 1) = fy;
             m_K(0, 2) = cx;
             m_K(1, 2) = cy;
 
-            // Fill distortion coefficients
-            m_dists.resize(5, 0.0f);
-            m_dists[0] = k1;
-            m_dists[1] = k2;
-            m_dists[2] = p1;
-            m_dists[3] = p2;
-            m_dists[4] = k3;
-
-            m_fishEye = false;
+            if (model == "OPENCV_FISHEYE")
+            {
+                float k1f, k2f, k3f, k4f;
+                iss >> k1f >> k2f >> k3f >> k4f;
+                m_dists = {k1f, k2f, k3f, k4f};
+                m_fishEye = true;
+            }
+            else
+            {
+                iss >> k1 >> k2 >> p1 >> p2 >> k3;
+                m_dists = {k1, k2, p1, p2, k3};
+                m_fishEye = false;
+            }
 
             return true;
         }
@@ -158,7 +157,6 @@ bool CameraCalibration::loadCalibration(const std::string& file)
         return false;
     }
 
-    // Default: your original format
     std::ifstream ifs(file);
     if (!ifs.is_open())
     {
@@ -168,15 +166,44 @@ bool CameraCalibration::loadCalibration(const std::string& file)
 
     ifs >> m_width;
     ifs >> m_height;
+
     for (int r = 0; r < 3; ++r)
         for (int c = 0; c < 3; ++c)
             ifs >> m_K(r, c);
 
-    m_dists.resize(5);
-    for (int d = 0; d < 5; ++d)
-        ifs >> m_dists[d];
+
+    ifs.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+    std::string distLine;
+    std::getline(ifs, distLine);
+
+    std::replace(distLine.begin(), distLine.end(), ',', ' ');
+    std::istringstream distStream(distLine);
+    std::vector<double> dists;
+    double val;
+    while (distStream >> val)
+        dists.push_back(val);
 
     ifs >> m_fishEye;
+
+    if (m_fishEye)
+    {
+        if (dists.size() != 4)
+        {
+            std::cerr << "Fisheye camera expects 4 distortion parameters, got " << dists.size() << std::endl;
+            return false;
+        }
+        m_dists = dists;
+    }
+    else
+    {
+        if (dists.size() != 5)
+        {
+            std::cerr << "Pinhole camera expects 5 distortion parameters, got " << dists.size() << std::endl;
+            return false;
+        }
+        m_dists = dists;
+    }
 
     return true;
 }
@@ -232,33 +259,26 @@ void CameraCalibration::setDistortionParameters(const std::vector<double>& newDi
     m_dists = newDists;
 }
 
-// Add these to CameraCalibration.cpp
 void CameraCalibration::save(std::ostream& out) const {
-    // Intrinsics
     out.write(reinterpret_cast<const char*>(&m_K), sizeof(cv::Matx33d));
 
-    // Distortion parameters
     size_t dsize = m_dists.size();
     out.write(reinterpret_cast<const char*>(&dsize), sizeof(size_t));
     out.write(reinterpret_cast<const char*>(m_dists.data()), dsize * sizeof(double));
 
-    // Width, height, fisheye
     out.write(reinterpret_cast<const char*>(&m_width), sizeof(int));
     out.write(reinterpret_cast<const char*>(&m_height), sizeof(int));
     out.write(reinterpret_cast<const char*>(&m_fishEye), sizeof(bool));
 }
 
 void CameraCalibration::load(std::istream& in) {
-    // Intrinsics
     in.read(reinterpret_cast<char*>(&m_K), sizeof(cv::Matx33d));
 
-    // Distortion parameters
     size_t dsize;
     in.read(reinterpret_cast<char*>(&dsize), sizeof(size_t));
     m_dists.resize(dsize);
     in.read(reinterpret_cast<char*>(m_dists.data()), dsize * sizeof(double));
 
-    // Width, height, fisheye
     in.read(reinterpret_cast<char*>(&m_width), sizeof(int));
     in.read(reinterpret_cast<char*>(&m_height), sizeof(int));
     in.read(reinterpret_cast<char*>(&m_fishEye), sizeof(bool));

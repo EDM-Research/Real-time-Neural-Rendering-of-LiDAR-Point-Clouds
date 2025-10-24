@@ -61,30 +61,31 @@ int main(int argc, char**argv)
     }
 
     std::filesystem::path path_to_cloud = std::filesystem::path(argv[1]);
-
     std::filesystem::path traj_path = std::filesystem::path(argv[2]);
-
     std::filesystem::path calib = std::filesystem::path(argv[3]);
+
     CameraCalibration calibration;
     calibration.loadCalibration(calib);
-    
-//    calibration = calibration.getScaledCalibration(960,720);
+
+    calibration = calibration.getScaledCalibration(960, 720);
 
     // read point cloud (e57 or ply)
     auto grid = CloudReader::loadCloud(path_to_cloud, std::filesystem::path(getenv("HOME")) / ".pcl_cache"); // caches processed point cloud in ~/.pcl_cache, can change this to cache multiple point clouds
-    std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, std::filesystem::path(getenv("HOME")) / ".pcl_cache" / "trt_1920.ts"); // <= replace with path to model file
+
+    std::cout << OctreeGrid::getNumberPoints(grid) << std::endl;
+    std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, std::filesystem::path(getenv("HOME")) / ".pcl_cache" / ("trt_" + std::to_string(calibration.getWidth()) + "x" + std::to_string(calibration.getHeight()) + ".ts"));
+  //  std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, std::filesystem::path(getenv("HOME")) / ".pcl_cache" / ("model.pt")); // without tensor RT support
 
     std::vector<TrajectoryEntry> trajectory = readOrderedTrajectoryFile(traj_path);
-
-//    calibration.setHeight(1440);
-//    calibration.setWidth(1440);
 
     for (const auto& entry : trajectory) {
         cv::Mat rgb = cv::Mat(cv::Size(calibration.getWidth(), calibration.getHeight()), CV_8UC3);
         cv::Mat depth = cv::Mat(cv::Size(calibration.getWidth(), calibration.getHeight()), CV_32F);
-        std::cout << entry.pose << std::endl;
-        projector->computeFilteredRGBD(calibration, entry.pose, & rgb, &depth);
-        cv::imwrite(entry.filename, rgb);
+
+        projector->computeFull(calibration, entry.pose, & rgb, &depth);
+
+        cv::imshow("RGB", rgb);
+        cv::waitKey(1);
     }
     return 0;
 }

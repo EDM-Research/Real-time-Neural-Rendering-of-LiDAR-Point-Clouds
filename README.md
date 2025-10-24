@@ -1,5 +1,23 @@
 # Real-time Neural Rendering of LiDAR Point Clouds
 
+Accepted at Eurographics 2025.
+
+## Citation
+
+```
+@inproceedings{10.2312:egs.20251041,
+booktitle = {Eurographics 2025 - Short Papers},
+editor = {Ceylan, Duygu and Li, Tzu-Mao},
+title = {{Real-time Neural Rendering of LiDAR Point Clouds}},
+author = {VANHERCK, Joni and Zoomers, Brent and Mertens, Tom and Jorissen, Lode and Michiels, Nick},
+year = {2025},
+publisher = {The Eurographics Association},
+ISSN = {1017-4656},
+ISBN = {978-3-03868-268-4},
+DOI = {10.2312/egs.20251041}
+}
+```
+
 ## Installation - LINUX
 
 #### CMake
@@ -11,7 +29,8 @@ https://cmake.org/download/
 https://github.com/opencv/opencv
 
 #### Torch Tensor RT support
-- Download torch-tensorrt from https://github.com/pytorch/TensorRT/releases and look at the latest release and the dependencies. 
+
+- Download libtorchtrt-* from https://github.com/pytorch/TensorRT/releases and look at the latest release and the version of the dependencies. 
 - **Make sure to install the correct versions of the following dependencies**: libtorch, TensorRT, CUDA
 - Install CUDA toolkit: https://developer.nvidia.com/cuda-downloads
 - Install libtorch (https://pytorch.org/get-started/locally/) and torch tensor RT precompiled binaries to /usr/local folder. 
@@ -22,10 +41,9 @@ sudo dpkg -i nv-tensorrt-local-repo-*.deb
 sudo apt update
 sudo apt install tensorrt
 ```
-Make sure the correct version is installed. If you have an nvidia repository, the latest available version of tensorrt could be pulled from there. 
-
 
 #### No Tensor RT support
+
 - Install CUDA toolkit: https://developer.nvidia.com/cuda-downloads
 - Install libtorch (https://pytorch.org/get-started/locally/) precompiled binaries to /usr/local folder. 
 
@@ -34,6 +52,7 @@ Make sure the correct version is installed. If you have an nvidia repository, th
 Install libE57Format from https://github.com/asmaloney/libE57Format
 
 ### Build
+
 RTRenderer lib
 ```
 cd src
@@ -52,13 +71,16 @@ make -j4 && sudo make install
 
 ## Usage 
 
-See example for example code. 
+See example for example code. Example scenes can be downloaded from [ScanNet++]{https://scannetpp.mlsg.cit.tum.de/scannetpp/}.
 
 To compile the model for your architecture using Tensor RT do the following:
 ```
 python -m pip install torch torch-tensorrt tensorrt torchvision --extra-index-url https://download.pytorch.org/whl/cuxxx <-- fill in your cuda version
 ```
-Then change the export_ts.py file to compile for your specific resolution(s), and run `example` using the exported .ts file on `line 73`. 
+Then change the export_ts.py file to compile for your specific resolution(s), and run `example`.
+
+Without Tensor RT support run the export_pt.py file, uncomment `line 77` and run `example`.
+
 
 ```
 render_trajectory <path_to_point_cloud> <path_to_trajectory> <path_to_intrinsics>

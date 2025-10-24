@@ -1,4 +1,5 @@
 #include "PointCloudReader.h"
+#include "Utils.h"
 using namespace e57;
 
 

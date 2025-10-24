@@ -1,6 +1,7 @@
 #include "cloudreader.h"
 #include "PointCloudReader.h"
 #include "Utils.h"
+#include "project_cloud.h"
 #define TINYPLY_IMPLEMENTATION
 #include "tinyply.h"
 
@@ -214,3 +215,40 @@ std::unordered_map<int, OctreeGrid::Block> CloudReader::loadCloud(const std::fil
     return grid;
 }
 
+
+void CloudReader::loadCubemaps(const std::filesystem::path &file_name, std::vector<cv::Mat> &imgs, std::vector<cv::Mat> &depths, std::vector<cv::Matx44d> &w2cam, std::vector<CameraCalibration> &calibs)
+{
+    if(file_name.extension() != ".e57")
+    {
+        std::cerr << "Not supported file extension" << std::endl;
+        return;
+    }
+
+    PointCloudReader reader(file_name.string());
+
+    int numberOfImages = reader.getNumberOfImages();
+    std::cout << numberOfImages << std::endl;
+
+    auto grid = loadCloud(file_name);
+    ProjectCloud projector{grid};
+
+    for(int i = 0; i < numberOfImages; i++)
+    {
+        std::cout << i << std::endl;
+        cv::Matx44d pose; cv::Matx33d intrinsics;
+        cv::Mat img = reader.getImage(i, pose, intrinsics);
+
+        CameraCalibration calib;
+        calib.setIntrinsicsMatrix(intrinsics);
+        calib.setWidth(img.cols);
+        calib.setHeight(img.rows);
+        cv::Mat depth(img.size(), CV_32F);
+        projector.computeRGBD(calib, pose, nullptr, &depth);
+
+        imgs.push_back(img);
+        depths.push_back(depth);
+        w2cam.push_back(pose);
+        calibs.push_back(calib);
+    }
+
+}
