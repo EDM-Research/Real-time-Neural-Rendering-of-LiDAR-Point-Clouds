@@ -1,6 +1,6 @@
 # Real-time Neural Rendering of LiDAR Point Clouds
 
-Accepted at Eurographics 2025.
+Accepted as short paper at Eurographics 2025.
 
 ## Citation
 
@@ -71,7 +71,8 @@ make -j4 && sudo make install
 
 ## Usage 
 
-See example for example code. Example scenes can be downloaded from [ScanNet++]{https://scannetpp.mlsg.cit.tum.de/scannetpp/}.
+See `example` for usage. Scenes can be downloaded from [ScanNet++](https://scannetpp.mlsg.cit.tum.de/scannetpp/).
+Please download the pre-trained model using Git LFS, or manually download the files if Git LFS is not available.
 
 To compile the model for your architecture using Tensor RT do the following:
 ```
