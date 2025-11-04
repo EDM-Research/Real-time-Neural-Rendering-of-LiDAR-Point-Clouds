@@ -1,6 +1,8 @@
 # Real-time Neural Rendering of LiDAR Point Clouds
 
-Accepted as short paper at Eurographics 2025.
+This is the official implementation of the preseted short paper at Eurographics 2025: [Real-time Neural Rendering of LiDAR Point Clouds](https://doi.org/10.2312/egs.20251041).
+
+*Static LiDAR scanners produce accurate, dense, colored point clouds, but often contain obtrusive artifacts which makes them ill-suited for direct display. We propose an efficient method to render more perceptually realistic images of such scans without any expensive preprocessing or training of a scene-specific model. A naive projection of the point cloud to the output view using 1×1 pixels is fast and retains the available detail, but also results in unintelligible renderings as background points leak between the foreground pixels. The key insight is that these projections can be transformed into a more realistic result using a deep convolutional model in the form of a U-Net, and a depth-based heuristic that prefilters the data. The U-Net also handles LiDAR-specific problems such as missing parts due to occlusion, color inconsistencies and varying point densities. We also describe a method to generate synthetic training data to deal with imperfectly-aligned ground truth images. Our method achieves real-time rendering rates using an off-the-shelf GPU and outperforms the state-of-the-art in both speed and quality.*
 
 ## Citation
 
@@ -99,3 +101,9 @@ render_trajectory <path_to_point_cloud> <path_to_trajectory> <path_to_intrinsics
         k1 k2 p1 p2 k3
         0
 ```
+
+
+## About
+![](/img/DFL_FlandersMake.jpg)
+
+This work is a development by [Hasselt University](https://www.uhasselt.be/), [Digital Future Lab](https://www.uhasselt.be/en/instituten-en/digitalfuturelab), funded by Hasselt University.
