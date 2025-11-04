@@ -8,15 +8,15 @@ This is the official implementation of the preseted short paper at Eurographics 
 
 ```
 @inproceedings{10.2312:egs.20251041,
-booktitle = {Eurographics 2025 - Short Papers},
-editor = {Ceylan, Duygu and Li, Tzu-Mao},
-title = {{Real-time Neural Rendering of LiDAR Point Clouds}},
-author = {VANHERCK, Joni and Zoomers, Brent and Mertens, Tom and Jorissen, Lode and Michiels, Nick},
-year = {2025},
-publisher = {The Eurographics Association},
-ISSN = {1017-4656},
-ISBN = {978-3-03868-268-4},
-DOI = {10.2312/egs.20251041}
+    booktitle = {Eurographics 2025 - Short Papers},
+    editor = {Ceylan, Duygu and Li, Tzu-Mao},
+    title = {{Real-time Neural Rendering of LiDAR Point Clouds}},
+    author = {VANHERCK, Joni and Zoomers, Brent and Mertens, Tom and Jorissen, Lode and Michiels, Nick},
+    year = {2025},
+    publisher = {The Eurographics Association},
+    ISSN = {1017-4656},
+    ISBN = {978-3-03868-268-4},
+    DOI = {10.2312/egs.20251041}
 }
 ```
 
