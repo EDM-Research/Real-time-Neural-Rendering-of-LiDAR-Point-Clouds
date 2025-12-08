@@ -83,9 +83,9 @@ int main(int argc, char**argv)
     // read point cloud (e57 or ply)
     auto grid = CloudReader::loadCloud(path_to_cloud, std::filesystem::path(getenv("HOME")) / ".pcl_cache"); // caches processed point cloud in ~/.pcl_cache, can change this to cache multiple point clouds
 
-    std::cout << OctreeGrid::getNumberPoints(grid) << std::endl;
-    std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, std::filesystem::path(getenv("HOME")) / ".pcl_cache" / ("trt_" + std::to_string(calibration.getWidth()) + "x" + std::to_string(calibration.getHeight()) + ".ts"));
-  //  std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, std::filesystem::path(getenv("HOME")) / ".pcl_cache" / ("model.pt")); // without tensor RT support
+    std::cout << "Loaded " << OctreeGrid::getNumberPoints(grid) << " points" << std::endl;
+    std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, "trt_" + std::to_string(calibration.getWidth()) + "x" + std::to_string(calibration.getHeight()) + ".ts");
+  //  std::shared_ptr<ProjectCloud> projector = std::make_shared<ProjectCloud>(grid, "model.pt"); // without tensor RT support
 
     std::vector<TrajectoryEntry> trajectory = readOrderedTrajectoryFile(traj_path);
 

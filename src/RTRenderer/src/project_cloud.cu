@@ -224,6 +224,7 @@ ProjectCloud::ProjectCloud(const std::unordered_map<int, OctreeGrid::Block>& gri
     }
     if(modelFilename != std::string(""))
     {
+        modelFilename = (std::filesystem::path(getenv("HOME")) / ".render_cache" / modelFilename).string();
         if(std::filesystem::exists(modelFilename))
         {
             std::cout << "Loading model from file: " << modelFilename << std::endl;

@@ -10,4 +10,5 @@ model.eval().cuda().half()
 # Export to TorchScript
 example_input = torch.randn(1, 5, 720, 960).cuda().half()  # Adjust to your input shape
 traced_model = torch.jit.trace(model, example_input)
-traced_model.save(os.getenv("HOME") + "/.pcl_cache/model.pt")
+# directory the renderer will look for the model named model.pt
+traced_model.save(os.getenv("HOME") + "/.render_cache/model.pt")
