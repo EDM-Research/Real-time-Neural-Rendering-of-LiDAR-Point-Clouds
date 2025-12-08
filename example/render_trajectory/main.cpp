@@ -15,27 +15,40 @@ struct TrajectoryEntry {
     std::string filename;
 };
 
+int frame_id = 0;
+
 TrajectoryEntry parseTrajectoryLine(const std::string& line) {
     std::istringstream iss(line);
     TrajectoryEntry entry;
-    double qw, qx, qy, qz, tx, ty, tz;
-    int camera_id;
 
-    iss >> entry.frame_id >> qw >> qx >> qy >> qz >> tx >> ty >> tz >> camera_id >> entry.filename;
+    double qw, qx, qy, qz;
+    double tx, ty, tz;
+    double timestamp;
+
+    frame_id++;
+    entry.frame_id = frame_id;
+    entry.filename = "frame_" + std::to_string(frame_id) + ".png";
+
+    iss >> timestamp >> tx >> ty >> tz >> qx >> qy >> qz >> qw;
 
     cv::Quatd q(qw, qx, qy, qz);
+    q = q.normalize();
+
     cv::Matx33d R = q.toRotMat3x3();
 
     entry.pose = cv::Matx44d::eye();
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 3; i++) {
         entry.pose(i, 0) = R(i, 0);
         entry.pose(i, 1) = R(i, 1);
         entry.pose(i, 2) = R(i, 2);
-        entry.pose(i, 3) = (i == 0 ? tx : (i == 1 ? ty : tz));
     }
+    entry.pose(0, 3) = tx;
+    entry.pose(1, 3) = ty;
+    entry.pose(2, 3) = tz;
 
     return entry;
 }
+
 
 std::vector<TrajectoryEntry> readOrderedTrajectoryFile(const std::string& filename) {
     std::vector<TrajectoryEntry> traj_list;
@@ -67,8 +80,6 @@ int main(int argc, char**argv)
     CameraCalibration calibration;
     calibration.loadCalibration(calib);
 
-    calibration = calibration.getScaledCalibration(960, 720);
-
     // read point cloud (e57 or ply)
     auto grid = CloudReader::loadCloud(path_to_cloud, std::filesystem::path(getenv("HOME")) / ".pcl_cache"); // caches processed point cloud in ~/.pcl_cache, can change this to cache multiple point clouds
 
@@ -82,7 +93,7 @@ int main(int argc, char**argv)
         cv::Mat rgb = cv::Mat(cv::Size(calibration.getWidth(), calibration.getHeight()), CV_8UC3);
         cv::Mat depth = cv::Mat(cv::Size(calibration.getWidth(), calibration.getHeight()), CV_32F);
 
-        projector->computeFull(calibration, entry.pose, & rgb, &depth);
+        projector->computeRGBD(calibration, entry.pose.inv(), & rgb, &depth);
 
         cv::imshow("RGB", rgb);
         cv::waitKey(1);

@@ -8,7 +8,7 @@
 #include "Timer.h"
 #include "types.h"
 #include <cuda_runtime.h>
-
+#include <filesystem>
 
 #define CUDA_ERROR(x)                                                                      \
     if (x != cudaSuccess) {                                                                  \
@@ -224,6 +224,15 @@ ProjectCloud::ProjectCloud(const std::unordered_map<int, OctreeGrid::Block>& gri
     }
     if(modelFilename != std::string(""))
     {
+        if(std::filesystem::exists(modelFilename))
+        {
+            std::cout << "Loading model from file: " << modelFilename << std::endl;
+        }
+        else
+        {
+            std::cerr << "Model file does not exist: " << modelFilename << ", make sure to compile the model for this camera resolution using model/export_ts.py with TensorRT support or model/export_pt.py without TensorRT support. See README.md for details." << std::endl;
+            exit(-1);
+        }
         try {
             model = torch::jit::load(modelFilename);
             model.to(torch::kCUDA);
@@ -317,7 +326,6 @@ int ProjectCloud::computeRGBDInternal(const CameraCalibration &calibration, cons
 
     return 1;
 }
-
 
 void ProjectCloud::applyDepthFilter(const CameraCalibration &calibration)
 {
@@ -478,7 +486,7 @@ int ProjectCloud::computeFull(const CameraCalibration& calibration, const cv::Ma
 
     auto end = std::chrono::high_resolution_clock::now();
 
-    std::cout << "PROJECT_CLOUD::COMPUTE_FULL: projection[" << std::chrono::duration_cast<std::chrono::milliseconds>(start_1 - start).count() << "], filter[" << std::chrono::duration_cast<std::chrono::milliseconds>(start_2 - start_1).count() << "], unet[" << std::chrono::duration_cast<std::chrono::milliseconds>(end - start_2).count() << "], Total[" << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "]" << std::endl;
+    std::cout << "RENDER_TIME: projection[" << std::chrono::duration_cast<std::chrono::milliseconds>(start_1 - start).count() << "], filter[" << std::chrono::duration_cast<std::chrono::milliseconds>(start_2 - start_1).count() << "], unet[" << std::chrono::duration_cast<std::chrono::milliseconds>(end - start_2).count() << "], Total[" << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "]" << std::endl;
 
     return 1;
 }

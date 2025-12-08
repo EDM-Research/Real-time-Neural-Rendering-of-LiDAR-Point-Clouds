@@ -1,8 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
 
-set(CMAKE_CUDA_COMPILER /usr/local/cuda/bin/nvcc)
-set(CMAKE_CUDA_ARCHITECTURES 89)
-
 project(RTRenderer LANGUAGES CXX CUDA)
 
 include(GNUInstallDirs)
@@ -52,9 +49,7 @@ target_compile_options(RTRenderer PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-O3 -g>
 )
 
-
 set_target_properties(RTRenderer PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-set_target_properties(RTRenderer PROPERTIES CUDA_ARCHITECTURES "89")
 
 file(GLOB sources "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c*")
 file(GLOB headers "${CMAKE_CURRENT_SOURCE_DIR}/include/*")
