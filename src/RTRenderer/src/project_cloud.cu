@@ -224,18 +224,18 @@ ProjectCloud::ProjectCloud(const std::unordered_map<int, OctreeGrid::Block>& gri
     }
     if(modelFilename != std::string(""))
     {
-        modelFilename = (std::filesystem::path(getenv("HOME")) / ".render_cache" / modelFilename).string();
-        if(std::filesystem::exists(modelFilename))
+        std::string modelFilename_ = (std::filesystem::path(getenv("HOME")) / ".render_cache" / modelFilename).string();
+        if(std::filesystem::exists(modelFilename_))
         {
-            std::cout << "Loading model from file: " << modelFilename << std::endl;
+            std::cout << "Loading model from file: " << modelFilename_ << std::endl;
         }
         else
         {
-            std::cerr << "Model file does not exist: " << modelFilename << ", make sure to compile the model for this camera resolution using model/export_ts.py with TensorRT support or model/export_pt.py without TensorRT support. See README.md for details." << std::endl;
+            std::cerr << "Model file does not exist: " << modelFilename_ << ", make sure to compile the model for this camera resolution using model/export_ts.py with TensorRT support or model/export_pt.py without TensorRT support. See README.md for details." << std::endl;
             exit(-1);
         }
         try {
-            model = torch::jit::load(modelFilename);
+            model = torch::jit::load(modelFilename_);
             model.to(torch::kCUDA);
             // model.to(torch::kHalf);
         }
